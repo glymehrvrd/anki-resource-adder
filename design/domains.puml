@@ -1,0 +1,54 @@
+@startuml
+
+class Note {
+  id: string,
+  sfld: string,
+  fields: [string]
+}
+
+class CardTemplate {
+  name: string,
+  ord: int,
+  qfmt: string,
+  afmt: string
+}
+
+class NoteField {
+  name: string,
+  ord: int,
+  font: string,
+  size: int
+}
+
+class NoteType {
+  id: string,
+  name: string,
+  tmpls: [CardTemplate],
+  flds: [NoteField]
+}
+
+class Conf {
+  curModel: string
+}
+
+class Collection {
+  conf: Conf,
+  notes: [Note],
+  medias: [Media]
+}
+
+class Media {
+  id: string,
+  name: string,
+  path: PathBuf
+}
+
+Media -- Note
+Collection o-- Media
+Collection o-- Note
+Collection o-- Conf
+NoteType o-- CardTemplate
+NoteType o-- NoteField
+Conf -- NoteType
+
+@enduml
