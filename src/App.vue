@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { open, save } from "@tauri-apps/api/dialog";
-import { ref, TextareaHTMLAttributes } from "vue";
+import { nextTick, ref, TextareaHTMLAttributes } from "vue";
 import { MessagePlugin } from "tdesign-vue-next";
 import { invoke } from "@tauri-apps/api/tauri";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -61,11 +61,12 @@ const start = async () => {
 
 let progressOutput = ref<HTMLTextAreaElement | null>(null);
 const progressData = ref('');
-listen('onUpdateProgress', (event) => {
+listen('onUpdateProgress', async (event) => {
   if (progressData.value !== '') {
     progressData.value= progressData.value+'\n';
   }
   progressData.value = progressData.value + event.payload;
+  await nextTick();
   if(progressOutput.value){
     progressOutput.value.scrollTop = progressOutput.value?.scrollHeight;
   }

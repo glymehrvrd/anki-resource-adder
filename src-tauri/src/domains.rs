@@ -3,12 +3,13 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     env,
-    fmt::Display,
-    fs::{self, File},
+    fmt::{format, Display},
+    fs::{self, DirEntry, File},
     io::{self, Read, Seek, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
 };
+use tauri::Manager;
 use zip::write::FileOptions;
 
 use crate::infra::{self, storage::Storage};
@@ -84,7 +85,7 @@ impl Collection {
         return tmp;
     }
 
-    pub fn import(path: &str) -> Result<Self, Error> {
+    pub fn import(path: &str, app_handle: &tauri::AppHandle) -> Result<Self, Error> {
         let fname = std::path::Path::new(path);
         let file = fs::File::open(&fname).context("open anki collection failed")?;
 
@@ -103,6 +104,8 @@ impl Collection {
         let mut db_tmp_path: Option<PathBuf> = None;
         let mut archive =
             zip::ZipArchive::new(file).context("open anki collection archive failed")?;
+        app_handle.emit_all("onUpdateProgress", "解包牌组...0%");
+        let archive_len = archive.len();
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).context("read file failed")?;
             let fname =
@@ -131,11 +134,16 @@ impl Collection {
                 }
             }
             let mut outfile = skip_fail!(fs::File::create(inst.get_file_path(&fname)));
-            log::info!("outfile={:#?}", inst.get_file_path(&fname));
             skip_fail!(io::copy(&mut file, &mut outfile));
+            app_handle.emit_all(
+                "onUpdateProgress",
+                format!(
+                    "解包牌组...{:.2}%",
+                    (i + 1) as f64 / archive_len as f64 * 100.0
+                ),
+            );
         }
         let db_path = db_tmp_path.ok_or(format_err!("cannot find anki data"))?;
-        log::info!("dbpath={}", db_path.display());
         infra::repository::init_dbstorage(
             infra::storage::DBStorage::new(&db_path.as_path())
                 .context("open anki collection db failed")?,
@@ -189,7 +197,11 @@ impl Collection {
         return Ok(());
     }
 
-    pub fn export<T: Write + Seek>(&self, writer: T) -> Result<(), Error> {
+    pub fn export<T: Write + Seek>(
+        &self,
+        writer: T,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<(), Error> {
         // build media
         self.build_media_meta().context("build media meta failed")?;
         let mut zip = zip::ZipWriter::new(writer);
@@ -198,7 +210,12 @@ impl Collection {
             .unix_permissions(0o755);
 
         let mut buffer = Vec::new();
-        for entry in fs::read_dir(&self.work_dir).context("read work_dir fail")? {
+        let entries = fs::read_dir(&self.work_dir)
+            .context("read work_dir fail")?
+            .enumerate()
+            .collect::<Vec<_>>();
+        let entry_len = entries.len();
+        for (i, entry) in entries {
             let entry = entry.context("get entry failed")?;
             let path = entry.path();
             let name = path
@@ -214,12 +231,23 @@ impl Collection {
                     .context("write zipfile failed")?;
                 buffer.clear();
             }
+            app_handle.emit_all(
+                "onUpdateProgress",
+                format!(
+                    "导出牌组...{:.2}%",
+                    (i + 1) as f64 / entry_len as f64 * 100.0
+                ),
+            );
+            log::error!(
+                "导出牌组...{:.2}%",
+                (i + 1) as f64 / entry_len as f64 * 100.0
+            );
         }
         zip.finish().context("finish zip failed")?;
         Result::Ok(())
     }
 
-    pub fn add_sound(&mut self) -> Result<(), Error> {
+    pub fn add_sound(&mut self, voice_dir: &Path) -> Result<(), Error> {
         for note in self.notes.borrow_mut().iter_mut() {
             for field in note.fields.iter_mut() {
                 if field.starts_with("[sound:") {
@@ -228,12 +256,9 @@ impl Collection {
             }
             let db = infra::repository::get_dbstorage().lock().unwrap();
             db.as_ref().unwrap().update_note(&note).unwrap();
-            let p = PathBuf::from_str(&format!(
-                "/Users/jasonjsyuan/Downloads/speech/{}/{}.mp3",
-                &note.sfld.chars().nth(0).unwrap().to_string(),
-                &note.sfld
-            ))
-            .context("get media path failed")?;
+            let mut p = voice_dir.to_path_buf();
+            p.push(&note.sfld.chars().nth(0).unwrap().to_string());
+            p.push(format!("{}.mp3", &note.sfld));
             let _ = self.add_media(Media {
                 name: note.sfld.to_owned() + ".mp3",
                 path: p,
